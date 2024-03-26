@@ -1,4 +1,5 @@
-const { convertToSQL } = require('../src/index');
+import { describe, expect, test } from 'vitest';
+import { convertToSQL } from '../src/index';
 
 // Test cases for MongoDB to SQL conversion
 describe('MongoDB to SQL Conversion', () => {
