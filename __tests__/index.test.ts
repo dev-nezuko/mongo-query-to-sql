@@ -4,13 +4,13 @@ const { convertToSQL } = require('../src/index');
 describe('MongoDB to SQL Conversion', () => {
   test('Converts basic find query with projection', () => {
     const mongoQuery = 'db.user.find({_id: 23113},{name: 1, age: 1});';
-    const expectedSQL = 'SELECT name, age FROM user WHERE id = 23113;';
+    const expectedSQL = 'SELECT name, age FROM "user" WHERE id = 23113;';
     expect(convertToSQL(mongoQuery, true)).toBe(expectedSQL);
   });
 
   test('Converts find query with condition and projection', () => {
     const mongoQuery = 'db.user.find({age: {$gte: 21}},{name: 1, _id: 1});';
-    const expectedSQL = 'SELECT name, id FROM user WHERE age >= 21;';
+    const expectedSQL = 'SELECT name, id FROM "user" WHERE age >= 21;';
     expect(convertToSQL(mongoQuery, true)).toBe(expectedSQL);
   });
 
@@ -22,7 +22,7 @@ describe('MongoDB to SQL Conversion', () => {
 
   test('Converts find query with $and operator', () => {
     const mongoQuery = 'db.order.find({$and: [{status: \'placed\'}, {total: {$gt: 100}}]},{_id: 0, customer: 1});';
-    const expectedSQL = 'SELECT customer FROM order WHERE (status = \'placed\' AND total > 100);';
+    const expectedSQL = 'SELECT customer FROM "order" WHERE (status = \'placed\' AND total > 100);';
     expect(convertToSQL(mongoQuery, true)).toBe(expectedSQL);
   });
 
@@ -34,7 +34,7 @@ describe('MongoDB to SQL Conversion', () => {
 
   test('Converts find query with $in operator', () => {
     const mongoQuery = 'db.user.find({age: {$in: [25, 30]}},{name: 1});';
-    const expectedSQL = 'SELECT name FROM user WHERE age IN (25, 30);';
+    const expectedSQL = 'SELECT name FROM "user" WHERE age IN (25, 30);';
     expect(convertToSQL(mongoQuery, true)).toBe(expectedSQL);
   });
 
@@ -59,3 +59,12 @@ describe('Boundaries and recursive filters', () => {
  test.each(['toString','constructor','__proto__'])('rejects inherited operator key %s', operator => {
    expect(convertToSQL(`db.users.find({age:{"${operator}":21}});`)).toBe('');
  });
+
+describe('Identifier and literal fixes', () => {
+  test('reserved words are double-quoted', () => expect(convertToSQL('db.order.find({select: 1, Group: "a"}, {from: 1});')).toBe('SELECT "from" FROM "order" WHERE "select" = 1 AND "Group" = \'a\';'));
+  test('unsafe integers are refused instead of rounded', () => expect(convertToSQL('db.users.find({id: 12345678901234567890});')).toBe(''));
+  test('largest safe integer is kept exactly', () => expect(convertToSQL('db.users.find({id: 9007199254740991});')).toBe('SELECT * FROM users WHERE id = 9007199254740991;'));
+  test('NUL characters are refused', () => expect(convertToSQL('db.users.find({name: "a\\u0000b"});')).toBe(''));
+  test('AND inside a string literal does not change grouping', () => expect(convertToSQL('db.users.find({$or: [{a: "x AND y"}, {b: 1}]});')).toBe("SELECT * FROM users WHERE (a = 'x AND y' OR b = 1);"));
+  test('a multi-bound field inside $or stays grouped', () => expect(convertToSQL('db.users.find({$or: [{age: {$gte: 21, $lt: 65}}, {vip: true}]});')).toBe('SELECT * FROM users WHERE ((age >= 21 AND age < 65) OR vip = TRUE);'));
+});
