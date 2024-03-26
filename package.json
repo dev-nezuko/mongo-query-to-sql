@@ -1,14 +1,30 @@
 {
   "name": "mongodb-to-sql-translator",
   "version": "1.0.0",
-  "description": "Limited MongoDB find-string to SQL-string translation exercise",
-  "main": "dist/index.js",
+  "description": "Translate a safe subset of MongoDB find() queries into SQL text, as a library or CLI",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "mongo-to-sql": "dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "example": "npm run build && node examples/translate.cjs",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepack": "npm run build"
   },
   "keywords": [
     "mongodb",
