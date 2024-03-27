@@ -1,11 +1,12 @@
 {
   "name": "mongodb-to-sql-translator",
   "version": "1.0.0",
-  "description": "A powerful tool for translating MongoDB queries to SQL statements.",
-  "main": "index.js",
+  "description": "Limited MongoDB find-string to SQL-string translation exercise",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "npx tsc && node dist/index.js",
-    "test": "npx jest"
+    "build": "tsc",
+    "test": "jest",
+    "example": "npm run build && node examples/translate.cjs"
   },
   "keywords": [
     "mongodb",
@@ -16,8 +17,7 @@
   ],
   "license": "ISC",
   "dependencies": {
-    "json5": "^2.2.3",
-    "mongo-parse": "^2.1.0"
+    "json5": "^2.2.3"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",

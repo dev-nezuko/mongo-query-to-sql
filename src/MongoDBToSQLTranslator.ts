@@ -1,140 +1,75 @@
-var mongoParse = require('mongo-parse');
-import { mongoOperatorsMap, parseObjFromString, buildWhereElement } from './utils';
-import { MONGO_QUERY_OPERATOR } from './constants';
-import ErrorHandler from './ErrorHandler';
+import JSON5 from 'json5';
 
-// Define interfaces for parsed query and statements
-interface ParsedQuery {
-  fromClausePrepared: string;
-  queryStatements: string;
+type RecordValue = Record<string, unknown>;
+const operators: Record<string, string> = { $eq: '=', $ne: '!=', $lt: '<', $lte: '<=', $gt: '>', $gte: '>=' };
+function object(value: unknown): value is RecordValue {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function identifier(value: string, renameID = false): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) throw new Error('Unsupported identifier');
+  return renameID && value === '_id' ? 'id' : value;
+}
+function literal(value: unknown): string {
+  if (typeof value === 'string') return "'" + value.replace(/'/g, "''") + "'";
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
+  if (value === null) return 'NULL';
+  throw new Error('Unsupported value');
+}
+function comparison(field: string, operator: string, operand: unknown): string {
+  if (operator === '$in') {
+    if (!Array.isArray(operand) || !operand.length || operand.includes(null)) throw new Error('Unsupported IN operands');
+    return `${field} IN (${operand.map(literal).join(', ')})`;
+  }
+  const sqlOperator = operators[operator];
+  if (!sqlOperator) throw new Error('Unsupported operator');
+  if (operand === null) {
+    if (operator === '$eq') return `${field} IS NULL`;
+    if (operator === '$ne') return `${field} IS NOT NULL`;
+    throw new Error('Unsupported NULL comparison');
+  }
+  return `${field} ${sqlOperator} ${literal(operand)}`;
+}
+function condition(value: unknown, renameID: boolean, depth = 0): string {
+  if (!object(value) || depth > 20) throw new Error('Unsupported filter');
+  return Object.entries(value).map(([key, operand]) => {
+    if (key === '$and' || key === '$or') {
+      if (!Array.isArray(operand) || !operand.length) throw new Error('Empty logical group');
+      const nested = operand.map(item => condition(item, renameID, depth + 1));
+      if (nested.some(item => !item)) throw new Error('Empty logical condition');
+      // Preserve implicit conjunctions inside every logical operand.
+      return '(' + nested.map(item => item.includes(' AND ') ? '(' + item + ')' : item).join(key === '$or' ? ' OR ' : ' AND ') + ')';
+    }
+    const field = identifier(key, renameID);
+    if (!object(operand)) return comparison(field, '$eq', operand);
+    if (!Object.keys(operand).length) throw new Error('Empty operator object');
+    return Object.entries(operand).map(([operator, item]) => comparison(field, operator, item)).join(' AND ');
+  }).join(' AND ');
+}
+function projection(value: unknown, renameID: boolean): string {
+  if (value === undefined || (object(value) && !Object.keys(value).length)) return '*';
+  if (!object(value)) throw new Error('Unsupported projection');
+  const selected: string[] = [];
+  for (const [key, flag] of Object.entries(value)) {
+    const name = identifier(key, renameID);
+    if (flag === 1) selected.push(name);
+    else if (!(key === '_id' && flag === 0)) throw new Error('Only inclusion projections are supported');
+  }
+  if (!selected.length) throw new Error('Exclusion-only projection needs schema knowledge');
+  return selected.join(', ');
 }
 
-interface ParsedStatements {
-  whereClausePrepared: any[];
-  selectClausePrepared: string[];
-}
-
-// Class for translating MongoDB queries to SQL
-class MongoDBToSQLTranslator {
-  // Private method to parse the structure of the original query
-  private parseStructure(originalQuery: string): ParsedQuery {
-    if (originalQuery.length < 1) {
-      ErrorHandler.handleError(new Error('Empty query'));
-    }
-
-    let index = originalQuery.indexOf('.');
-    if (index === -1) {
-      ErrorHandler.handleError(new Error('Wrong format'));
-    }
-
-    const prefix = originalQuery.slice(0, index);
-    if (prefix !== 'db') {
-      ErrorHandler.handleError(new Error('Wrong format'));
-    }
-
-    let rest = originalQuery.slice(index + 1);
-    index = rest.indexOf('.');
-    if (index === -1) {
-      ErrorHandler.handleError(new Error('Wrong format'));
-    }
-
-    const fromClausePrepared = rest.slice(0, index);
-    if (fromClausePrepared.length < 1) {
-      ErrorHandler.handleError(new Error('Missing collection name'));
-    }
-
-    rest = rest.slice(index + 1);
-    index = rest.indexOf('(');
-    const method = rest.slice(0, index);
-    if (method !== 'find') {
-      ErrorHandler.handleError(new Error('Wrong or not supported MongoDB method (' + method + ')'));
-    }
-
-    let lastChar = rest.length;
-    if (rest[lastChar - 1] === ';') {
-      lastChar -= 1;
-    }
-    const queryStatements = rest.slice(index, lastChar);
-
-    return { fromClausePrepared, queryStatements };
-  }
-
-  // Private method to parse the statements within the query
-  private parseStatements(originalStatements: string): ParsedStatements {
-    if (originalStatements[0] !== '(' || originalStatements[originalStatements.length - 1] !== ')') {
-      ErrorHandler.handleError(new Error('Method is not parenthesized'));
-    }
-
-    const preparedForObjectParsing = '[' + originalStatements.slice(1, originalStatements.length - 1) + ']';
-    const query = parseObjFromString(preparedForObjectParsing);
-
-    const whereParsed = mongoParse.parse(query[0]);
-    const selectParsed = mongoParse.parse(query[1]);
-
-    const whereClausePrepared = whereParsed.parts.reduce((prev: any[], curr: any) => [...prev, this.prepareWhereClause(curr)], []);
-    const selectClausePrepared = selectParsed.parts.reduce((prev: string[], curr: any) => {
-      if (curr.operand === 1) {
-        return [...prev, curr.field];
-      } else {
-        return prev;
-      }
-    }, []);
-
-    return { whereClausePrepared, selectClausePrepared };
-  }
-
-  // Private method to prepare the where clause elements
-  private prepareWhereClause(currentMongoParserElement: any): any {
-    const { field, operator, operand } = currentMongoParserElement;
-
-    if (typeof field === 'undefined') {
-      const nested = operand.reduce((prev: any[], curr: any) => {
-        const parsed = mongoParse.parse(curr);
-        return [...prev, this.prepareWhereClause(parsed.parts[0])];
-      }, []);
-
-      return { field: MONGO_QUERY_OPERATOR, operator: mongoOperatorsMap[operator], operand: nested };
-    }
-
-    return { field, operator: mongoOperatorsMap[operator], operand };
-  }
-
-  // Private method to build the SQL query
-  private buildSQL(describedQuery: { selectClausePrepared: string[]; fromClausePrepared: string; whereClausePrepared: any[] }, removeUnderscoreBeforeID: boolean): string {
-    const { selectClausePrepared, fromClausePrepared, whereClausePrepared } = describedQuery;
-
-    if (removeUnderscoreBeforeID) {
-      selectClausePrepared.forEach((element, index) => {
-        if (element === '_id') {
-          selectClausePrepared[index] = 'id';
-        }
-      });
-    }
-
-    // Construct the SQL query
-    const select = 'SELECT ' + (selectClausePrepared.length > 0 ? selectClausePrepared.join(', ') : '*');
-    const from = 'FROM ' + fromClausePrepared;
-    const where = 'WHERE ' + whereClausePrepared.reduce((prev, curr) => [...prev, buildWhereElement(curr, removeUnderscoreBeforeID)], []).join(' AND ');
-
-    return select + ' ' + from + ' ' + where + ';';
-  }
-
-  // Public method to produce SQL from MongoDB input
-  public produceSQL(input: string, removeUnderscoreBeforeID: boolean = false): string {
+/** Limited string-to-string translator; it never connects to a database. */
+export default class MongoDBToSQLTranslator {
+  public produceSQL(input: string, removeUnderscoreBeforeID = false): string {
     try {
-      const { fromClausePrepared, queryStatements } = this.parseStructure(input.trim());
-      const { whereClausePrepared, selectClausePrepared } = this.parseStatements(queryStatements.trim());
-      return this.buildSQL({
-        selectClausePrepared,
-        fromClausePrepared,
-        whereClausePrepared
-      }, removeUnderscoreBeforeID);
-    } catch (error) {
-      ErrorHandler.handleError(error as Error);
-      return ''; // Return a default value in case of an error
-    }
+      if (input.length > 100000) return '';
+      const match = /^db\.([A-Za-z_][A-Za-z0-9_]*)\.find\(([\s\S]*)\);?$/.exec(input.trim());
+      if (!match) return '';
+      const args: unknown[] = JSON5.parse('[' + match[2] + ']');
+      if (args.length < 1 || args.length > 2 || !object(args[0])) return '';
+      const where = condition(args[0], removeUnderscoreBeforeID);
+      return `SELECT ${projection(args[1], removeUnderscoreBeforeID)} FROM ${identifier(match[1])}${where ? ' WHERE ' + where : ''};`;
+    } catch { return ''; }
   }
 }
-
-// Export the MongoDBToSQLTranslator class
-export default MongoDBToSQLTranslator;

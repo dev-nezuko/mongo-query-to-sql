@@ -1,61 +1,54 @@
-# MongoDB to SQL Translator
+# MongoDB find syntax → SQL text
 
-This project is a powerful tool for translating MongoDB queries to SQL statements. It is written in TypeScript and can be run in a Node.js environment. This project is built for Glassdoor takehome exercise purpose.
-
-## Usage
-
-To use this translator in your project, follow these steps:
-
-1. **Import the `convertToSQL` Function:**
-   Import the `convertToSQL` function from the `MongoDBToSQLTranslator` module.
-
-2. **Convert MongoDB Query to SQL**
-
-To convert a MongoDB query into SQL using this function, call the `convertToSQL` function and pass your MongoDB query as a string parameter. Replace `'your MongoDB query'` with your actual MongoDB query.
-
-Here's an example in TypeScript:
 
 ```typescript
-const sql = convertToSQL('your MongoDB query');
+import { convertToSQL } from './src';
+
+convertToSQL('db.users.find({age: {$gte: 21}}, {name: 1, _id: 1});', true);
+// SELECT name, id FROM users WHERE age >= 21;
+
+convertToSQL('db.users.find({$or: [{age: {$gte: 21}, active: true}, {name: "Sample"}]});');
+// SELECT * FROM users WHERE ((age >= 21 AND active = TRUE) OR name = 'Sample');
 ```
 
-By default, the function does not remove underscores before the ID field in the generated SQL. If you want to remove underscores before the ID, you can pass `true` as the second parameter.
+The optional second argument renames an exact `_id` field to `id` in filters and projections. An empty filter produces `SELECT * FROM users;`, without an empty `WHERE` clause.
 
-```typescript
-const sqlWithoutUnderscore = convertToSQL('your MongoDB query', true);
+## Run the examples
+
+```sh
+npm ci --ignore-scripts
+npm test -- --runInBand
+npm run example
 ```
 
-The converted SQL query will be stored in the `sql` or `sqlWithoutUnderscore` variable. You can log or use this SQL query as needed.
+`npm run build` compiles source into `dist/`. `npm run example` compiles and runs a synthetic query; it never opens MongoDB or a SQL database. The package entry points to `dist/index.js` after building. There is no interactive CLI or web UI.
 
-```typescript
-console.log(sql);
-console.log(sqlWithoutUnderscore);
-```
+## Supported subset
 
-## Scripts
+| Input | Translation |
+| --- | --- |
+| Direct string, finite number or boolean values | Equality comparison |
+| `$eq`, `$ne`, `$lt`, `$lte`, `$gt`, `$gte` | Corresponding scalar comparison |
+| `$in` with a nonempty list of non-null scalar values | `IN (...)` |
+| `$and`, `$or` | Recursive logical groups; all fields in each operand are retained |
+| Explicit `null` equality/inequality | `IS NULL` / `IS NOT NULL` |
+| Projection fields set to `1` | Explicit SQL column list |
+| `_id: 0` alongside included fields | Omit `_id` from that projection |
 
-You can run the following scripts using npm:
+Collection and field names must use simple letters, digits and underscores, without a leading digit. The query is limited to 100,000 characters and logical recursion to 20 levels. JSON5 parses the argument text; no JavaScript is evaluated. Strings use doubled apostrophes for display literals.
 
-- `npm run dev`: Compiles the TypeScript files and runs the resulting JavaScript code in a Node.js environment.
-- `npm run test`: Executes the test suite using Jest to ensure the functionality of the translator.
+Unsupported or malformed queries return `''`, preserving the function's existing failure contract. Non-string input throws. Unsupported operators, dotted paths, nested document literals, exclusion-only projections, method chains, empty `$in`, nonfinite numbers and extra arguments are rejected rather than partially translated.
 
-## Dependencies
+## Boundaries that matter
 
-This project relies on the following dependencies:
+This is **not a complete MongoDB-to-SQL compatibility layer**. MongoDB missing-field, array and null behavior do not generally match SQL. Projections do not reproduce MongoDB's implicit `_id` inclusion. There is no schema metadata, identifier quoting or reserved-word handling, and no declared SQL dialect. Some simple identifiers can still be reserved SQL words.
 
-- **json5:** Used to parse JSON5 strings.
-- **mongo-parse:** Utilized for parsing MongoDB queries.
+The output is for inspection and learning. Do not execute strings produced from untrusted input. A database-facing implementation should emit an explicit dialect's quoted identifiers and parameterized values, with tests for the target database's semantics. Doubling quotes here does not establish that safety contract across SQL dialects.
 
-## Author
+## Implementation and checks
 
-This project was authored by Saleem.
+`src/index.ts` exposes `convertToSQL`; `src/MongoDBToSQLTranslator.ts` validates the outer call, parses arguments, recursively builds conditions and renders the limited output. The previous extra parser and redundant helper files were removed to keep the supported grammar in one place.
 
-## License
+The suite retains the original examples and adds empty-filter, apostrophe, nested-conjunction, range, null and fail-closed cases. TypeScript compilation and the executable example are checked separately. No database integration or cross-dialect correctness was tested.
 
-This project is licensed under the ISC License. You can find more information about the license in the LICENSE file.
-
-Feel free to contribute to this project by adding more features, enhancing existing functionalities, or fixing any issues. You can also customize the translator according to your project's needs.
-
-If you have any questions, refer to the FAQ section or reach out to the author for assistance.
-
-Happy translating!
+The unused copied font folder was removed; this library has no font or browser rendering requirement. Package metadata declares ISC, but the repository has no `LICENSE` file; this README does not invent one or change attribution.

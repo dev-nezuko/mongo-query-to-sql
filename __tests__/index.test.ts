@@ -45,3 +45,13 @@ describe('MongoDB to SQL Conversion', () => {
   });
 
 });
+
+
+describe('Boundaries and recursive filters', () => {
+  test('empty filters omit WHERE', () => expect(convertToSQL('db.users.find({});')).toBe('SELECT * FROM users;'));
+  test('apostrophes are escaped in display literals', () => expect(convertToSQL(`db.users.find({name: "O'Brien"});`)).toBe("SELECT * FROM users WHERE name = 'O''Brien';"));
+  test('logical operands keep all their fields', () => expect(convertToSQL('db.users.find({$or:[{age:{$gte:21},active:true},{name:"Sample"}]});')).toBe("SELECT * FROM users WHERE ((age >= 21 AND active = TRUE) OR name = 'Sample');"));
+  test('both bounds on a field survive', () => expect(convertToSQL('db.users.find({age:{$gte:21,$lt:65}});')).toBe('SELECT * FROM users WHERE age >= 21 AND age < 65;'));
+  test('explicit null comparison uses IS NULL', () => expect(convertToSQL('db.users.find({nickname:null});')).toBe('SELECT * FROM users WHERE nickname IS NULL;'));
+  test.each(['db.users.delete({});','db.users.find({age:{$regex:"x"}});','db.users.find({"name; DROP TABLE users":1});','db.users.find({age:{$in:[]}});','db.users.find({}, {name:0});','db.users.find({age:NaN});','db.users.find({}).limit(1);','db.users.find({"profile.age":21});'])('unsupported input fails closed: %s', query=>expect(convertToSQL(query)).toBe(''));
+});
