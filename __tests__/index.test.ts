@@ -55,3 +55,7 @@ describe('Boundaries and recursive filters', () => {
   test('explicit null comparison uses IS NULL', () => expect(convertToSQL('db.users.find({nickname:null});')).toBe('SELECT * FROM users WHERE nickname IS NULL;'));
   test.each(['db.users.delete({});','db.users.find({age:{$regex:"x"}});','db.users.find({"name; DROP TABLE users":1});','db.users.find({age:{$in:[]}});','db.users.find({}, {name:0});','db.users.find({age:NaN});','db.users.find({}).limit(1);','db.users.find({"profile.age":21});'])('unsupported input fails closed: %s', query=>expect(convertToSQL(query)).toBe(''));
 });
+
+ test.each(['toString','constructor','__proto__'])('rejects inherited operator key %s', operator => {
+   expect(convertToSQL(`db.users.find({age:{"${operator}":21}});`)).toBe('');
+ });

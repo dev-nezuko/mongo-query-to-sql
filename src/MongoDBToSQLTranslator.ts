@@ -22,7 +22,7 @@ function comparison(field: string, operator: string, operand: unknown): string {
     return `${field} IN (${operand.map(literal).join(', ')})`;
   }
   const sqlOperator = operators[operator];
-  if (!sqlOperator) throw new Error('Unsupported operator');
+  if (typeof sqlOperator !== 'string') throw new Error('Unsupported operator');
   if (operand === null) {
     if (operator === '$eq') return `${field} IS NULL`;
     if (operator === '$ne') return `${field} IS NOT NULL`;
